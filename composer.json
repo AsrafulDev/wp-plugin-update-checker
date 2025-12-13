@@ -1,0 +1,46 @@
+{
+    "name": "asrafuldev/wp-plugin-update-checker",
+    "description": "Lightweight WordPress plugin update checker for integrating with license servers. No external dependencies.",
+    "type": "library",
+    "keywords": [
+        "wordpress",
+        "plugin",
+        "update",
+        "checker",
+        "license",
+        "automatic-updates"
+    ],
+    "homepage": "https://github.com/AsrafulDev/wp-plugin-update-checker",
+    "license": "GPL-2.0-or-later",
+    "authors": [
+        {
+            "name": "Asraful Islam",
+            "email": "asrafulislam.dev@gmail.com"
+        }
+    ],
+    "require": {
+        "php": ">=7.4"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^9.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "WHB\\UpdateChecker\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "WHB\\UpdateChecker\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "phpunit"
+    },
+    "support": {
+        "issues": "https://github.com/AsrafulDev/wp-plugin-update-checker/issues",
+        "source": "https://github.com/AsrafulDev/wp-plugin-update-checker"
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
