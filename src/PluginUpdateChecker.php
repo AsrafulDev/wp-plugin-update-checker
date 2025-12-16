@@ -46,6 +46,26 @@ class PluginUpdateChecker {
      * @var string License key for premium products
      */
     private $licenseKey;
+    
+    /**
+     * @var callable License key callback for dynamic retrieval
+     */
+    private $licenseKeyCallback;
+    
+    /**
+     * @var bool Whether this is a paid plugin requiring license
+     */
+    private $requiresLicense = false;
+    
+    /**
+     * @var string License server URL for validation
+     */
+    private $licenseServerUrl = '';
+    
+    /**
+     * @var int Hours between license validation checks (default: 1 hour)
+     */
+    private $licenseCheckPeriod = 1;
 
     /**
      * Initialize the update checker
@@ -55,16 +75,29 @@ class PluginUpdateChecker {
      * @param string $slug Plugin slug (optional, auto-detected from file)
      * @param int $checkPeriod Hours between update checks (default: 12)
      * @param string $licenseKey License key for premium products (optional)
+     * @param bool $requiresLicense Whether this plugin requires a valid license (default: false for free plugins)
      */
-    public function __construct($metadataUrl, $pluginFile, $slug = '', $checkPeriod = 12, $licenseKey = '') {
+    public function __construct($metadataUrl, $pluginFile, $slug = '', $checkPeriod = 12, $licenseKey = '', $requiresLicense = false) {
         $this->metadataUrl = $metadataUrl;
         $this->pluginFile = plugin_basename($pluginFile);
         $this->slug = empty($slug) ? dirname($this->pluginFile) : $slug;
         $this->checkPeriod = $checkPeriod;
         $this->optionName = 'whb_update_check_' . md5($this->slug);
         $this->licenseKey = $licenseKey;
+        $this->requiresLicense = $requiresLicense;
+        
+        // Extract license server URL from metadata URL
+        if (strpos($metadataUrl, '/api/v1/updates/check') !== false) {
+            $this->licenseServerUrl = str_replace('/api/v1/updates/check', '', $metadataUrl);
+        }
 
         $this->registerHooks();
+        
+        // Register hourly license validation check
+        if ($this->requiresLicense && !empty($this->licenseServerUrl)) {
+            add_action('init', [$this, 'scheduleLicenseValidation']);
+            add_action('whb_hourly_license_check_' . $this->slug, [$this, 'validateLicenseWithServer']);
+        }
     }
 
     /**
@@ -162,6 +195,12 @@ class PluginUpdateChecker {
      * @return object|false
      */
     private function requestUpdateInfo() {
+        // If URL is the new format (license server with /api/v1/updates/check)
+        if (strpos($this->metadataUrl, '/api/v1/updates/check') !== false || strpos($this->metadataUrl, '/api/updates/check') !== false) {
+            return $this->requestLicenseServerUpdate();
+        }
+        
+        // Otherwise use the simple API format (GET /api/{slug})
         $url = $this->buildRequestUrl();
 
         $response = wp_remote_get($url, [
@@ -188,6 +227,91 @@ class PluginUpdateChecker {
         }
 
         return $this->convertToWpFormat($data);
+    }
+
+    /**
+     * Request update from license server (POST /api/v1/updates/check)
+     * 
+     * @return object|false
+     */
+    private function requestLicenseServerUpdate() {
+        $currentVersion = $this->getCurrentVersion();
+        $siteUrl = get_site_url();
+        $licenseKey = $this->getLicenseKey(); // Get fresh license key
+        
+        $body = [
+            'product_slug' => $this->slug,
+            'current_version' => $currentVersion,
+            'site_url' => $siteUrl,
+        ];
+        
+        // Add license key if available
+        if (!empty($licenseKey)) {
+            $body['key'] = $licenseKey;
+        }
+        
+        $response = wp_remote_post($this->metadataUrl, [
+            'timeout' => 10,
+            'headers' => [
+                'Accept' => 'application/json',
+                'Content-Type' => 'application/json',
+            ],
+            'body' => json_encode($body),
+        ]);
+
+        if (is_wp_error($response)) {
+            return false;
+        }
+
+        $code = wp_remote_retrieve_response_code($response);
+        if ($code !== 200) {
+            return false;
+        }
+
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body);
+
+        if (empty($data)) {
+            return false;
+        }
+
+        // Handle API response format
+        if (isset($data->success) && !$data->success) {
+            return false;
+        }
+
+        // If update_available is explicitly false, no update
+        if (isset($data->update_available) && $data->update_available === false) {
+            return false;
+        }
+
+        // If new_version exists and is greater than current, there's an update
+        if (isset($data->new_version)) {
+            return $this->convertLicenseServerFormat($data);
+        }
+
+        return false;
+    }
+
+    /**
+     * Convert license server response to WordPress format
+     * 
+     * @param object $data License server response
+     * @return object WordPress update object
+     */
+    private function convertLicenseServerFormat($data) {
+        $update = new \stdClass();
+        $update->slug = $this->slug;
+        $update->plugin = $this->pluginFile;
+        $update->new_version = $data->new_version ?? '';
+        $update->version = $data->new_version ?? ''; // For compatibility
+        $update->url = ''; // Will be fetched from plugin info
+        $update->package = $data->download_url ?? '';
+        $update->tested = $data->tested_up_to ?? '';
+        $update->requires_php = $data->requires_php ?? '';
+        $update->requires = $data->requires_wp ?? $data->requires ?? '';
+        
+        return $update;
     }
 
     /**
@@ -393,6 +517,142 @@ class PluginUpdateChecker {
      * @return string
      */
     public function getLicenseKey() {
+        // If callback is set, use it to get fresh license key
+        if (is_callable($this->licenseKeyCallback)) {
+            $this->licenseKey = call_user_func($this->licenseKeyCallback);
+        }
         return $this->licenseKey;
+    }
+    
+    /**
+     * Set license key callback for dynamic retrieval
+     * 
+     * @param callable $callback
+     */
+    public function setLicenseKeyCallback($callback) {
+        $this->licenseKeyCallback = $callback;
+    }
+    
+    /**
+     * Force update check by clearing cache
+     * This triggers a fresh check against the custom license server
+     */
+    public function forceUpdateCheck() {
+        // Clear cached update data
+        delete_option($this->optionName . '_time');
+        delete_option($this->optionName . '_data');
+        
+        // Clear WordPress transient to force recheck
+        delete_site_transient('update_plugins');
+        
+        // Trigger WordPress update check which will call our custom checker via filter
+        wp_update_plugins();
+    }
+    
+    /**
+     * Schedule hourly license validation
+     */
+    public function scheduleLicenseValidation() {
+        $hook = 'whb_hourly_license_check_' . $this->slug;
+        
+        if (!wp_next_scheduled($hook)) {
+            wp_schedule_event(time(), 'hourly', $hook);
+        }
+    }
+    
+    /**
+     * Validate license with remote server and update local DB
+     */
+    public function validateLicenseWithServer() {
+        // Check if we should validate (hourly check)
+        $lastValidation = get_option('whb_license_validation_time', 0);
+        $now = time();
+        
+        if (($now - $lastValidation) < ($this->licenseCheckPeriod * 3600)) {
+            return; // Already validated recently
+        }
+        
+        // Get current license key from DB
+        $licenseKey = get_option('whb_license_key', '');
+        
+        if (empty($licenseKey)) {
+            // No license key, mark as inactive
+            update_option('whb_license_status', 'inactive');
+            update_option('whb_license_validation_time', $now);
+            return;
+        }
+        
+        // Call license server to validate
+        $apiUrl = $this->licenseServerUrl . '/api/v1/licenses/' . $licenseKey . '/status';
+        
+        $response = wp_remote_get($apiUrl, [
+            'timeout' => 10,
+            'headers' => [
+                'Accept' => 'application/json',
+            ],
+        ]);
+        
+        if (is_wp_error($response)) {
+            // Network error, don't change status
+            error_log('License validation failed: ' . $response->get_error_message());
+            return;
+        }
+        
+        $code = wp_remote_retrieve_response_code($response);
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+        
+        // Update validation time
+        update_option('whb_license_validation_time', $now);
+        
+        if ($code === 200 && isset($data['success']) && $data['success']) {
+            $licenseData = $data['data'] ?? [];
+            
+            // Check if license is active
+            if (isset($licenseData['is_active']) && $licenseData['is_active']) {
+                update_option('whb_license_status', 'active');
+                update_option('whb_license_data', [
+                    'license_key' => $licenseData['license_key'] ?? $licenseKey,
+                    'status' => $licenseData['status'] ?? 'active',
+                    'product_name' => $licenseData['product']['name'] ?? '',
+                    'product_slug' => $licenseData['product']['slug'] ?? '',
+                    'current_version' => $licenseData['product']['current_version'] ?? '',
+                    'expires_at' => $licenseData['expires_at'] ?? null,
+                    'activation_limit' => $licenseData['activation_limit'] ?? -1,
+                    'active_activations' => $licenseData['active_activations'] ?? 0,
+                ]);
+            } else {
+                // License is not active
+                update_option('whb_license_status', 'inactive');
+            }
+        } else {
+            // Invalid response or license not found
+            update_option('whb_license_status', 'inactive');
+        }
+    }
+    
+    /**
+     * Check if license is valid from local DB
+     * 
+     * @return bool
+     */
+    public function isLicenseValid() {
+        // For free plugins, always return true
+        if (!$this->requiresLicense) {
+            return true;
+        }
+        
+        // Check local DB status
+        $status = get_option('whb_license_status', '');
+        return in_array($status, ['valid', 'active']);
+    }
+    
+    /**
+     * Set whether this plugin requires a license
+     * 
+     * @param bool $requires
+     */
+    public function setRequiresLicense($requires) {
+        $this->requiresLicense = $requires;
     }
 }
