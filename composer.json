@@ -1,7 +1,7 @@
 {
     "name": "asrafuldev/wp-plugin-update-checker",
     "description": "Lightweight WordPress plugin update checker for integrating with license servers. No external dependencies.",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "type": "library",
     "keywords": [
         "wordpress",
