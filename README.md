@@ -1,6 +1,6 @@
 # WordPress Plugin Update Checker & License Client
 
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/AsrafulDev/wp-plugin-update-checker/releases)
+[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/AsrafulDev/wp-plugin-update-checker/releases)
 [![Stability](https://img.shields.io/badge/stability-stable-green.svg)](https://github.com/AsrafulDev/wp-plugin-update-checker)
 [![License](https://img.shields.io/badge/license-GPL--2.0--or--later-blue.svg)](LICENSE)
 [![PHP](https://img.shields.io/badge/php-%3E%3D7.4-blue.svg)](https://php.net)
