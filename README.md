@@ -1,5 +1,10 @@
 # WordPress Plugin Update Checker & License Client
 
+[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/AsrafulDev/wp-plugin-update-checker/releases)
+[![Stability](https://img.shields.io/badge/stability-stable-green.svg)](https://github.com/AsrafulDev/wp-plugin-update-checker)
+[![License](https://img.shields.io/badge/license-GPL--2.0--or--later-blue.svg)](LICENSE)
+[![PHP](https://img.shields.io/badge/php-%3E%3D7.4-blue.svg)](https://php.net)
+
 **Complete License Management & Update System for WordPress Plugins**
 
 A comprehensive solution for WordPress plugin licensing, updates, and support - **integrated in just one line of code**.
